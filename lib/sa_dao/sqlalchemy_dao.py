@@ -493,3 +493,13 @@ class SqlAlchemyDAO(object):
 
         return connection_parameters
 
+    def query(self, query_def):
+        return self.get_query(query_def=query_def)
+
+    def save(self, obj, commit=True):
+        self.session.add(obj)
+        if commit:
+            self.commit()
+
+    def commit(self):
+        self.session.commit()

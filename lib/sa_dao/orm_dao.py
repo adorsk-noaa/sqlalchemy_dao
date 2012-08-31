@@ -7,14 +7,8 @@ from sqlalchemy.orm import aliased, class_mapper
 from sqlalchemy.orm.util import AliasedClass
 from sqlalchemy.orm.properties import RelationshipProperty
 import re
+import types
 
-class QueryProxy(object):
-    def __init__(self, q):
-        self.q = q
-    def fetchall(self):
-        return self.q.all()
-    def fetchone(self):
-        return self.q.one()
 
 class ORM_DAO(SqlAlchemyDAO):
     def __init__(self, session=None, schema=None):
@@ -22,7 +16,7 @@ class ORM_DAO(SqlAlchemyDAO):
         self.connection = session.connection
         self.schema = schema
 
-    def get_query(self, query_def, **kwargs):
+    def get_query(self, query_def, style="cursor", **kwargs):
 
         # Initialize registries.
         source_registry = {'join_tree': {'children': {}}, 'nodes': {}}
@@ -122,6 +116,11 @@ class ORM_DAO(SqlAlchemyDAO):
                 .group_by(*group_bys)\
                 .order_by(*order_bys)
 
+        # If style is cursor, decorate w/ cursor-style
+        # fetch functions.
+        if style == 'cursor':
+            self.cursorify_query(q)
+
         return q
 
     def get_query_proxy(self, q):
@@ -220,10 +219,11 @@ class ORM_DAO(SqlAlchemyDAO):
 
         return entity_registry[entity_def['ID']]
 
-    def save(self, obj, commit=True):
-        self.session.add(obj)
-        if commit:
-            self.commit()
+    def cursorify_query(self, q):
+        def fetchall(self):
+                return self.all()
+        q.fetchall = types.MethodType(fetchall, q)
 
-    def commit(self):
-        self.session.commit()
+        def fetchone(self):
+            return self.one()
+        q.fetchone = types.MethodType(fetchone, q)
