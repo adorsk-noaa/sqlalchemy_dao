@@ -32,6 +32,8 @@ class ORM_DAO(SqlAlchemyDAO):
 
         # Process 'select'.
         selections = []
+        if isinstance(query_def.get('SELECT'), str):
+            query_def['SELECT'] = [query_def['SELECT']]
         for entity_def in query_def.get('SELECT', []):
             if not entity_def: continue
             entity = self.get_registered_entity(
