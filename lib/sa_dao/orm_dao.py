@@ -219,3 +219,11 @@ class ORM_DAO(SqlAlchemyDAO):
             entity_registry[entity_def['ID']] = mapped_entity
 
         return entity_registry[entity_def['ID']]
+
+    def save(self, obj, commit=True):
+        self.session.add(obj)
+        if commit:
+            self.commit()
+
+    def commit(self):
+        self.session.commit()
