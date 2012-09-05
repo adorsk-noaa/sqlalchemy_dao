@@ -29,14 +29,13 @@ class SqlAlchemyDAO(object):
     def execute_queries(self, query_defs=[]):
         results = {}
         for query_def in query_defs:
-            q = self.get_query(query_def)
+            q = self.get_query(query_def, style="cursor")
             #print "q is: ", self.query_to_raw_sql(q)
             # If using jython, compile first.  Sometimes
             # there are issues w/ using histograms.
             if platform.system() == 'Java':
                 q = self.query_to_raw_sql(q)
-            query_proxy = self.get_query_proxy(q)
-            rows = query_proxy.fetchall()
+            rows = q.fetchall()
             # By default, return results as dictionaries.
             if query_def.get('AS_DICTS', True):
                 q_results = []

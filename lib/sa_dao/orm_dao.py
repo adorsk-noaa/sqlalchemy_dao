@@ -13,7 +13,7 @@ import types
 class ORM_DAO(SqlAlchemyDAO):
     def __init__(self, session=None, schema=None):
         self.session = session
-        self.connection = session.connection
+        self.connection = session.connection()
         self.schema = schema
 
     def get_query(self, query_def, style="cursor", **kwargs):
@@ -51,17 +51,22 @@ class ORM_DAO(SqlAlchemyDAO):
         for where_def in query_def.get('WHERE', []):
             if not where_def: continue
 
-            # Get registered entity.
-            entity = self.get_registered_entity(
+            # Get registered entities.
+            left = self.get_registered_entity(
                 source_registry, entity_registry, where_def[0])
+
+            right = where_def[2]
+            if type(right) == dict and right.get('type') == 'entity':
+                right = self.get_registered_entity(source_registry,
+                                                   entity_registry, right)
 
             # Handle mapped operators.
             if self.ops.has_key(where_def[1]):
-                op = getattr(entity, self.ops[where_def[1]])
-                where = op(where_def[2])
+                op = getattr(left, self.ops[where_def[1]])
+                where = op(right)
             # Handle all other operators.
             else:
-                where = mapped_entity.op(where_def[1])(where_def[2])
+                where = left.op(where_def[1])(right)
             wheres.append(where)
             
         # Process 'group_by'.
@@ -128,9 +133,6 @@ class ORM_DAO(SqlAlchemyDAO):
             self.cursorify_query(q)
 
         return q
-
-    def get_query_proxy(self, q):
-        return QueryProxy(q)
 
     def get_registered_source(self, source_registry, source_def):
         source_def = self.prepare_source_def(source_def)
@@ -233,3 +235,7 @@ class ORM_DAO(SqlAlchemyDAO):
         def fetchone(self):
             return self.one()
         q.fetchone = types.MethodType(fetchone, q)
+
+    def query_to_raw_sql(self, q, dialect=None):
+        return super(ORM_DAO, self).query_to_raw_sql(
+            q.statement, dialect=dialect)

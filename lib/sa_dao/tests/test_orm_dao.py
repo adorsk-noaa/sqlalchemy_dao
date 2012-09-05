@@ -16,7 +16,7 @@ class ORM_DAO_Test(BaseTest):
             'schema1':  self.setUpSchemaAndData1()
         }
 
-    def xtest_join_query(self):
+    def test_join_query(self):
         schema = self.schemas['schema1']
         dao = ORM_DAO(session=self.session, schema=schema)
         simple_q = {
@@ -44,6 +44,18 @@ class ORM_DAO_Test(BaseTest):
                 {'ID': 'foo', 'EXPRESSION': '{{TestClass1}}'}, 
                 '{{TestClass1.id}}'],
         }
+        results = dao.execute_queries(query_defs=[q])
+
+    def test_entity_where(self):
+        schema = self.schemas['schema1']
+        dao = ORM_DAO(session=self.session, schema=schema)
+        q = {
+            'ID': 'obj_q',
+            'SELECT': ['{{TestClass1}}', '{{TestClass2}}'],
+            'WHERE': [['{{TestClass1.id}}', '==', {'type': 'entity',
+                                                   'EXPRESSION':
+                                                   '{{TestClass2.id}}'}]]
+        } 
         results = dao.execute_queries(query_defs=[q])
 
     def setUpSchemaAndData1(self):
