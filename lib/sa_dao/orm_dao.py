@@ -22,6 +22,10 @@ class ORM_DAO(SqlAlchemyDAO):
         source_registry = {'join_tree': {'children': {}}, 'nodes': {}}
         entity_registry = {}
 
+        # Convert simple select to query def.
+        if isinstance(query_def, str):
+            query_def = {'SELECT': query_def}
+
         # Process 'from'.
         froms = []
         for source_def in query_def.get('FROM', []):
