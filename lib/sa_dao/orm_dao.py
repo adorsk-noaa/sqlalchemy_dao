@@ -3,7 +3,7 @@ from sqlalchemy.sql import *
 from sqlalchemy.sql import compiler
 from sqlalchemy import cast, String, case
 import sqlalchemy.orm as orm
-from sqlalchemy.orm import aliased, class_mapper
+from sqlalchemy.orm import aliased, class_mapper, join
 from sqlalchemy.orm.util import AliasedClass
 from sqlalchemy.orm.properties import RelationshipProperty
 import re
@@ -31,7 +31,8 @@ class ORM_DAO(SqlAlchemyDAO):
         for source_def in query_def.get('FROM', []):
             if not source_def: continue
             # Process any joins the source has and add to from obj.
-            source = self.add_joins(source_registry, source_def)
+            source = self.add_joins(source_registry, entity_registry, 
+                                    source_def)
             froms.append(source)
 
         # Process 'select'.
@@ -50,23 +51,8 @@ class ORM_DAO(SqlAlchemyDAO):
         wheres = []
         for where_def in query_def.get('WHERE', []):
             if not where_def: continue
-
-            # Get registered entities.
-            left = self.get_registered_entity(
-                source_registry, entity_registry, where_def[0])
-
-            right = where_def[2]
-            if type(right) == dict and right.get('type') == 'entity':
-                right = self.get_registered_entity(source_registry,
-                                                   entity_registry, right)
-
-            # Handle mapped operators.
-            if self.ops.has_key(where_def[1]):
-                op = getattr(left, self.ops[where_def[1]])
-                where = op(right)
-            # Handle all other operators.
-            else:
-                where = left.op(where_def[1])(right)
+            where = self.process_where_def(where_def, source_registry, 
+                                           entity_registry)
             wheres.append(where)
             
         # Process 'group_by'.
@@ -133,6 +119,50 @@ class ORM_DAO(SqlAlchemyDAO):
             self.cursorify_query(q)
 
         return q
+
+    def process_where_def(self, where_def, source_registry,
+                           entity_registry):
+        left = self.process_where_element(source_registry, 
+                                          entity_registry, 
+                                          where_def[0])
+        right = self.process_where_element(source_registry, 
+                                          entity_registry, 
+                                          where_def[2])
+        if self.ops.has_key(where_def[1]):
+            op = getattr(left, self.ops[where_def[1]])
+            where = op(right)
+        else:
+            where = left.op(where_def[1])(right)
+        return where
+
+    def process_where_element(self, source_registry, entity_registry, element):
+        if isinstance(element, dict) and element.get('TYPE') == 'ENTITY':
+            return self.get_registered_entity(source_registry, 
+                                              entity_registry,
+                                              element)
+        else:
+            return element
+
+
+    def add_joins(self, source_registry, entity_registry, source_def):
+        source_def = self.prepare_source_def(source_def)
+        source = self.get_registered_source(source_registry, source_def)
+        for join_def in source_def.get('JOINS', []):
+            if not isinstance(join_def, list):
+                join_def = [join_def]
+            if len(join_def) > 1:
+                where_def = join_def[1]
+                onclause = self.process_where_def(where_def, 
+                                                  source_registry,
+                                                  entity_registry)
+            else:
+                onclause = None
+            source = orm.join(source, self.add_joins(source_registry,
+                                                     entity_registry, 
+                                                     join_def[0]), 
+                              onclause=onclause)
+        return source
+
 
     def get_registered_source(self, source_registry, source_def):
         source_def = self.prepare_source_def(source_def)

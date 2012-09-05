@@ -21,8 +21,21 @@ class ORM_DAO_Test(BaseTest):
         dao = ORM_DAO(session=self.session, schema=schema)
         simple_q = {
             'ID': 'simple_q',
-            'SELECT': ['{{TestClass1.id}}'],
-            'WHERE': [['{{TestClass1.children.id}}', '==', 1]],
+            'SELECT': ['{{TestClass1}}'],
+            'FROM': [
+                {
+                    'SOURCE': 'TestClass1',
+                    'JOINS': [
+                        [
+                            'TestClass2', [
+                                {'TYPE': 'ENTITY', 'EXPRESSION': '{{TestClass1.id}}'}, 
+                                '==', 
+                                {'TYPE': 'ENTITY', 'EXPRESSION': '{{TestClass2.id}}'}
+                            ]
+                        ]
+                    ]
+                }
+            ],
         }
         results = dao.execute_queries(query_defs=[simple_q])
 
@@ -35,7 +48,7 @@ class ORM_DAO_Test(BaseTest):
         }
         results = dao.execute_queries(query_defs=[q])
 
-    def test_combined_query(self):
+    def xtest_combined_query(self):
         schema = self.schemas['schema1']
         dao = ORM_DAO(session=self.session, schema=schema)
         q = {
@@ -46,15 +59,13 @@ class ORM_DAO_Test(BaseTest):
         }
         results = dao.execute_queries(query_defs=[q])
 
-    def test_entity_where(self):
+    def xtest_entity_where(self):
         schema = self.schemas['schema1']
         dao = ORM_DAO(session=self.session, schema=schema)
         q = {
             'ID': 'obj_q',
             'SELECT': ['{{TestClass1}}', '{{TestClass2}}'],
-            'WHERE': [['{{TestClass1.id}}', '==', {'type': 'entity',
-                                                   'EXPRESSION':
-                                                   '{{TestClass2.id}}'}]]
+            'WHERE': []
         } 
         results = dao.execute_queries(query_defs=[q])
 
