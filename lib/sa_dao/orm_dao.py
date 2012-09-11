@@ -3,7 +3,7 @@ from sqlalchemy.sql import *
 from sqlalchemy.sql import compiler
 from sqlalchemy import cast, String, case
 import sqlalchemy.orm as orm
-from sqlalchemy.orm import aliased, class_mapper, join
+from sqlalchemy.orm import aliased, class_mapper
 from sqlalchemy.orm.util import AliasedClass
 from sqlalchemy.orm.properties import RelationshipProperty
 import re
@@ -11,158 +11,23 @@ import types
 
 
 class ORM_DAO(SqlAlchemyDAO):
+
     def __init__(self, session=None, schema=None):
         self.session = session
         self.connection = session.connection()
         self.schema = schema
 
-    def get_query(self, query_def, style="cursor", **kwargs):
+    def join_(self, *args, **kwargs):
+        return orm.join(*args, **kwargs)
 
-        # Initialize registries.
-        source_registry = {'join_tree': {'children': {}}, 'nodes': {}}
-        entity_registry = {}
-
-        # Convert simple select to query def.
-        if isinstance(query_def, str):
-            query_def = {'SELECT': query_def}
-
-        # Process 'from'.
-        froms = []
-        for source_def in query_def.get('FROM', []):
-            if not source_def: continue
-            # Process any joins the source has and add to from obj.
-            source = self.add_joins(source_registry, entity_registry, 
-                                    source_def)
-            froms.append(source)
-
-        # Process 'select'.
-        selections = []
-        if isinstance(query_def.get('SELECT'), str):
-            query_def['SELECT'] = [query_def['SELECT']]
-        for entity_def in query_def.get('SELECT', []):
-            if not entity_def: continue
-            entity = self.get_registered_entity(
-                source_registry, entity_registry, entity_def)
-            selections.append(entity)
-
-        # Process 'where'.
-        # Where def is assumed to be a list with three parts:
-        # entity, op, value.
-        wheres = []
-        for where_def in query_def.get('WHERE', []):
-            if not where_def: continue
-            where = self.process_where_def(where_def, source_registry, 
-                                           entity_registry)
-            wheres.append(where)
-            
-        # Process 'group_by'.
-        group_bys = []
-        for entity_def in query_def.get('GROUP_BY', []):
-            if not entity_def: continue
-
-            entity_def = self.prepare_entity_def(entity_def)
-
-            # If entity is a histogram entity, get histogram entities for grouping.
-            if entity_def.get('AS_HISTOGRAM'):
-                histogram_entity = self.get_histogram_entity(
-                    source_registry, entity_registry, entity_def)
-                group_bys.extend([histogram_entity])
-
-            # Otherwise just use the plain entity for grouping.
-            else:
-                entity = self.get_registered_entity(source_registry, entity_registry, entity_def)
-                group_bys.append(entity)
-
-        # If 'select_group_by' is true, add group_by entities to select.
-        if query_def.get('SELECT_GROUP_BY'):
-            selections.extend(group_bys)
-
-        # Process 'order_by'.
-        order_bys = []
-        for order_by_def in query_def.get('ORDER_BY', []):
-            if not order_by_def: continue
-            # If def is not a dict , we assume it represents an entity id.
-            if not isinstance(order_by_def, dict):
-                order_by_def = {'ENTITY': order_by_def}
-            # Get registered entity.
-            entity = self.get_registered_entity(
-                source_registry, entity_registry, order_by_def['ENTITY'])
-
-            # Assign direction.
-            if order_by_def.get('DIRECTION') == 'desc':
-                order_by_entity = desc(entity)
-            else:
-                order_by_entity = asc(entity)
-            order_bys.append(order_by_entity)
-
-
-        # Process joins.
-        for node in source_registry['join_tree']['children'].values():
-            join_chain = self.process_join_tree_node(node)
-            if join_chain:
-                join_point = join_chain[0]
-                for target in join_chain[1:]:
-                    join_point = orm.join(
-                        join_point, target)
-                froms.append(join_point)
-
-        # Assemble query.
+    def assemble_query(self, selections=[], froms=[], wheres=[], group_bys=[],
+                       order_bys=[]):
         q = self.session.query(*selections)\
                 .select_from(*froms)\
                 .filter(*wheres)\
                 .group_by(*group_bys)\
                 .order_by(*order_bys)
-
-        # If style is cursor, decorate w/ cursor-style
-        # fetch functions.
-        if style == 'cursor':
-            self.cursorify_query(q)
-
         return q
-
-    def process_where_def(self, where_def, source_registry,
-                           entity_registry):
-        left = self.process_where_element(source_registry, 
-                                          entity_registry, 
-                                          where_def[0])
-        right = self.process_where_element(source_registry, 
-                                          entity_registry, 
-                                          where_def[2])
-        if self.ops.has_key(where_def[1]):
-            op = getattr(left, self.ops[where_def[1]])
-            where = op(right)
-        else:
-            where = left.op(where_def[1])(right)
-        return where
-
-    def process_where_element(self, source_registry, entity_registry, element):
-        if isinstance(element, dict) and element.get('TYPE') == 'ENTITY':
-            return self.get_registered_entity(source_registry, 
-                                              entity_registry,
-                                              element)
-        else:
-            return element
-
-
-    def add_joins(self, source_registry, entity_registry, source_def):
-        source_def = self.prepare_source_def(source_def)
-        source = self.get_registered_source(source_registry, source_def)
-        for join_def in source_def.get('JOINS', []):
-            if not isinstance(join_def, list):
-                join_def = [join_def]
-            if len(join_def) > 1:
-                where_def = join_def[1]
-                onclause = self.process_where_def(where_def, 
-                                                  source_registry,
-                                                  entity_registry)
-            else:
-                onclause = None
-            source = orm.join(source, self.add_joins(source_registry,
-                                                     entity_registry, 
-                                                     join_def[0]), 
-                              onclause=onclause)
-        return source
-
 
     def get_registered_source(self, source_registry, source_def):
         source_def = self.prepare_source_def(source_def)
@@ -172,13 +37,15 @@ class ORM_DAO(SqlAlchemyDAO):
             # If 'source' is a dict , we assume it's a query object and process it.
             if isinstance(source_def['SOURCE'], dict):
                 source = self.get_query(source_def['SOURCE']).alias(source_def['ID'])
-
+                node = {
+                    'source': source,
+                    'children': {}
+                }
             # Otherwise we process the source path...
             else:
                 parts = source_def['SOURCE'].split('.')
 
                 # Register dependencies and add to join tree.
-                node = None
                 parent_node = source_registry['join_tree']
                 if len(parts) < 2:
                     source_id = '.'.join(parts)
@@ -257,6 +124,10 @@ class ORM_DAO(SqlAlchemyDAO):
 
         return entity_registry[entity_def['ID']]
 
+    def get_result_cursor(self, q):
+        self.cursorify_query(q)
+        return q
+
     def cursorify_query(self, q):
         def fetchall(self):
                 return self.all()
@@ -269,3 +140,11 @@ class ORM_DAO(SqlAlchemyDAO):
     def query_to_raw_sql(self, q, dialect=None):
         return super(ORM_DAO, self).query_to_raw_sql(
             q.statement, dialect=dialect)
+
+    def save(self, obj, commit=True):
+        self.session.add(obj)
+        if commit:
+            self.commit()
+
+    def commit(self):
+        self.session.commit()

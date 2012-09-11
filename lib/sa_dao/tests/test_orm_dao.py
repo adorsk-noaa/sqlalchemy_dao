@@ -39,7 +39,7 @@ class ORM_DAO_Test(BaseTest):
         }
         results = dao.execute_queries(query_defs=[simple_q])
 
-    def xtest_obj_query(self):
+    def test_obj_query(self):
         schema = self.schemas['schema1']
         dao = ORM_DAO(session=self.session, schema=schema)
         q = {
@@ -48,7 +48,7 @@ class ORM_DAO_Test(BaseTest):
         }
         results = dao.execute_queries(query_defs=[q])
 
-    def xtest_combined_query(self):
+    def test_combined_query(self):
         schema = self.schemas['schema1']
         dao = ORM_DAO(session=self.session, schema=schema)
         q = {
@@ -59,7 +59,7 @@ class ORM_DAO_Test(BaseTest):
         }
         results = dao.execute_queries(query_defs=[q])
 
-    def xtest_entity_where(self):
+    def test_entity_where(self):
         schema = self.schemas['schema1']
         dao = ORM_DAO(session=self.session, schema=schema)
         q = {

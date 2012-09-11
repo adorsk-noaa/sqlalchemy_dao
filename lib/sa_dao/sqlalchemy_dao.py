@@ -3,6 +3,7 @@ from sqlalchemy.sql import compiler
 from sqlalchemy import cast, String, case
 from sqlalchemy.sql.expression import join
 from sqlalchemy.util._collections import NamedTuple
+from sqlalchemy.engine.base import RowProxy
 import sys
 import re
 import copy
@@ -25,22 +26,25 @@ class SqlAlchemyDAO(object):
         self.connection = connection
         self.schema = schema
 
+    def join_(self, *args, **kwargs):
+        return join(*args, **kwargs)
+
     # Given a list of query definitions, return results.
     def execute_queries(self, query_defs=[]):
         results = {}
         for query_def in query_defs:
-            q = self.get_query(query_def, style="cursor")
-            #print "q is: ", self.query_to_raw_sql(q)
+            q = self.get_query(query_def)
             # If using jython, compile first.  Sometimes
             # there are issues w/ using histograms.
             if platform.system() == 'Java':
                 q = self.query_to_raw_sql(q)
-            rows = q.fetchall()
+            rows = self.get_result_cursor(q).fetchall()
             # By default, return results as dictionaries.
             if query_def.get('AS_DICTS', True):
                 q_results = []
                 for row in rows:
-                    if not isinstance(row, NamedTuple):
+                    if not isinstance(row, NamedTuple) \
+                       and not isinstance(row, RowProxy):
                         q_results.append({'obj': row})
                     else:
                         q_results.append(dict(zip(row.keys(), row)))
@@ -48,7 +52,9 @@ class SqlAlchemyDAO(object):
                 q_results = rows
             results[query_def['ID']] = q_results
         return results
-        
+
+    def get_result_cursor(self, q):
+        return self.connection.execute(q)
 
     # Return a query object for the given query definition. 
     def get_query(self, query_def, **kwargs):
@@ -57,20 +63,28 @@ class SqlAlchemyDAO(object):
         source_registry = {'join_tree': {'children': {}}, 'nodes': {}}
         entity_registry = {}
 
+        # Convert simple select to query def.
+        if isinstance(query_def, str):
+            query_def = {'SELECT': query_def}
+
         # Process 'from'.
-        from_obj = []
+        froms = []
         for source_def in query_def.get('FROM', []):
             if not source_def: continue
             # Process any joins the source has and add to from obj.
-            source = self.add_joins(source_registry, source_def)
-            from_obj.append(source)
+            source = self.add_joins(source_registry, entity_registry, 
+                                    source_def)
+            froms.append(source)
 
         # Process 'select'.
-        columns = []
+        selections = []
+        if isinstance(query_def.get('SELECT'), str):
+            query_def['SELECT'] = [query_def['SELECT']]
         for entity_def in query_def.get('SELECT', []):
             if not entity_def: continue
-            entity = self.get_registered_entity(source_registry, entity_registry, entity_def)
-            columns.append(entity)
+            entity = self.get_registered_entity(
+                source_registry, entity_registry, entity_def)
+            selections.append(entity)
 
         # Process 'where'.
         # Where def is assumed to be a list with three parts:
@@ -78,25 +92,12 @@ class SqlAlchemyDAO(object):
         wheres = []
         for where_def in query_def.get('WHERE', []):
             if not where_def: continue
-
-            # Get registered entity.
-            entity = self.get_registered_entity(source_registry, entity_registry, where_def[0])
-
-            # Handle mapped operators.
-            if self.ops.has_key(where_def[1]):
-                op = getattr(entity, self.ops[where_def[1]])
-                where = op(where_def[2])
-            # Handle all other operators.
-            else:
-                where = mapped_entity.op(where_def[1])(where_def[2])
+            where = self.process_where_def(where_def, source_registry, 
+                                           entity_registry)
             wheres.append(where)
-        # Combine wheres into one clause.
-        whereclause = None
-        if len(wheres) > 0:
-            whereclause = and_(*wheres)
             
         # Process 'group_by'.
-        group_by = []
+        group_bys = []
         for entity_def in query_def.get('GROUP_BY', []):
             if not entity_def: continue
 
@@ -104,58 +105,80 @@ class SqlAlchemyDAO(object):
 
             # If entity is a histogram entity, get histogram entities for grouping.
             if entity_def.get('AS_HISTOGRAM'):
-                histogram_entity = self.get_histogram_entity(source_registry, entity_registry, entity_def)
-                group_by.extend([histogram_entity])
+                histogram_entity = self.get_histogram_entity(
+                    source_registry, entity_registry, entity_def)
+                group_bys.extend([histogram_entity])
 
             # Otherwise just use the plain entity for grouping.
             else:
                 entity = self.get_registered_entity(source_registry, entity_registry, entity_def)
-                group_by.append(entity)
+                group_bys.append(entity)
+
+        # If 'select_group_by' is true, add group_by entities to select.
+        if query_def.get('SELECT_GROUP_BY'):
+            selections.extend(group_bys)
 
         # Process 'order_by'.
-        order_by = []
+        order_bys = []
         for order_by_def in query_def.get('ORDER_BY', []):
             if not order_by_def: continue
             # If def is not a dict , we assume it represents an entity id.
             if not isinstance(order_by_def, dict):
                 order_by_def = {'ENTITY': order_by_def}
             # Get registered entity.
-            entity = self.get_registered_entity(source_registry, entity_registry, order_by_def['ENTITY'])
+            entity = self.get_registered_entity(
+                source_registry, entity_registry, order_by_def['ENTITY'])
 
             # Assign direction.
             if order_by_def.get('DIRECTION') == 'desc':
                 order_by_entity = desc(entity)
             else:
                 order_by_entity = asc(entity)
+            order_bys.append(order_by_entity)
 
-            order_by.append(order_by_entity)
+        # Process joins.
+        joins = self.process_joins(source_registry)
+        froms.extend(joins)
 
-        # If 'select_group_by' is true, add group_by entities to select.
-        if query_def.get('SELECT_GROUP_BY'):
-            columns.extend(group_by)
+        # Assemble query.
+        q = self.assemble_query(
+            selections=selections,
+            froms=froms,
+            wheres=wheres,
+            group_bys=group_bys,
+            order_bys=order_bys
+        )
 
-
-        # Process joins and add them to the from obj.
-        for node_id, node in source_registry['join_tree']['children'].items():
-            joins = self.process_join_tree(source_registry['join_tree'])
-            if joins:
-                # Go from child to parent.
-                joins.reverse()
-                source = joins[0]
-                for s in joins[1:]:
-                    source = join(source, s)
-                from_obj.append(source)
-
-        # Return the query object.
-        q = select(
-                columns=columns, 
-                from_obj=from_obj,
-                whereclause=whereclause,
-                group_by=group_by,
-                order_by=order_by,
-                use_labels=True
-                )
         return q
+
+    def assemble_query(self, selections=[], froms=[], wheres=[], group_bys=[],
+                       order_bys=[]):
+
+        if len(wheres) > 0:
+            whereclause = and_(*wheres)
+        else:
+            whereclause = None
+
+        q = select(
+            columns=selections,
+            from_obj=froms,
+            whereclause=whereclause,
+            group_by=group_bys,
+            order_by=order_bys,
+            use_labels=True
+        )
+        return q
+
+    def process_joins(self, source_registry):
+        joins = []
+        for node in source_registry['join_tree']['children'].values():
+            join_chain = self.process_join_tree_node(node)
+            if join_chain:
+                join_point = join_chain[0]
+                for target in join_chain[1:]:
+                    join_point = self.join_(join_point, target)
+                joins.append(join_point)
+        return joins
 
     def process_join_tree_node(self, node):
         join_chain = [node['source']]
@@ -174,59 +197,91 @@ class SqlAlchemyDAO(object):
     # Get or register a source in a source registry.
     def get_registered_source(self, source_registry, source_def):
         source_def = self.prepare_source_def(source_def)
-        
-        # Process source if it's not in the registry.
-        if not source_registry['nodes'].has_key(source_def['ID']):
+
+        node = source_registry['nodes'].get(source_def['ID'])
+        if not node:
+            # Register dependencies and add to join tree.
+            parent_node = source_registry['join_tree']
 
             # If 'source' is a dict , we assume it's a query object and process it.
             if isinstance(source_def['SOURCE'], dict):
                 source = self.get_query(source_def['SOURCE']).alias(source_def['ID'])
+                node = {
+                    'source': source,
+                    'children': {}
+                }
+                source_registry['nodes'][source_def['ID']] = node
+                parent_node['children'][source_def['ID']] = node
             # Otherwise we process the source path...
             else:
                 parts = source_def['SOURCE'].split('.')
+                for i in range(1, len(parts) + 1):
+                    parent_id = '.'.join(parts[:i])
+                    node = source_registry['nodes'].get(parent_id)
+                    if not node:
+                        parent_attr = parts[i-1]
+                        source = self.schema['sources'][parent_attr]
+                        node = {
+                            'source': source,
+                            'children': {}
+                        }
+                        source_registry['nodes'][parent_id] = node
+                        parent_node['children'][parent_attr] = node
 
-                # The source is the last part of the path.
-                source = self.schema['sources'][parts[-1]]
+                    parent_node = node
 
-                # Save the path to the join tree.
-                parent = source_registry['join_tree']
-                for part in parts:
-                    if not parent['children'].has_key(part):
-                        parent['children'][part] = {
-                                'source': self.schema['sources'][part],
-                                'children': {}
-                                }
-                    parent = parent['children'][part]
+        return node['source']
 
-            # Save the aliased source to the registry.
-            source_registry['nodes'][source_def['ID']] = source
-
-        return source_registry['nodes'][source_def['ID']]
-
-
-
-    # Add joins to source.
-    def add_joins(self, source_registry, source_def):
+    def add_joins(self, source_registry, entity_registry, source_def):
+        """ Add joins to a given source. """
         source_def = self.prepare_source_def(source_def)
-
-        # Get or register the source.
         source = self.get_registered_source(source_registry, source_def)
-
-        # Recursively process joins.
         for join_def in source_def.get('JOINS', []):
-            # Convert to list if given as a non-list.
             if not isinstance(join_def, list):
                 join_def = [join_def]
-
-            # Get onclause if given.
             if len(join_def) > 1:
-                onclause = join_def[1]
+                where_def = join_def[1]
+                onclause = self.process_where_def(where_def, 
+                                                  source_registry,
+                                                  entity_registry
+                                                 )
             else:
                 onclause = None
 
-            source = source.join(self.add_joins(source_registry, join_def[0]), onclause=onclause)
+            source = self.join_(
+                source, 
+                self.add_joins(
+                    source_registry,
+                    entity_registry,
+                    join_def[0]
+                ), 
+                onclause=onclause
+            )
 
         return source
+
+    def process_where_def(self, where_def, source_registry,
+                           entity_registry):
+        left = self.process_where_element(source_registry, 
+                                          entity_registry, 
+                                          where_def[0])
+        right = self.process_where_element(source_registry, 
+                                          entity_registry, 
+                                          where_def[2])
+        if self.ops.has_key(where_def[1]):
+            op = getattr(left, self.ops[where_def[1]])
+            where = op(right)
+        else:
+            where = left.op(where_def[1])(right)
+        return where
+
+    def process_where_element(self, source_registry, entity_registry, element):
+        if isinstance(element, dict) and element.get('TYPE') == 'ENTITY':
+            return self.get_registered_entity(source_registry, 
+                                              entity_registry,
+                                              element)
+        else:
+            return element
 
     def prepare_entity_def(self, entity_def):
         # If item is not a dict, we assume it's a string-like object representing an entity expression.
@@ -491,14 +546,3 @@ class SqlAlchemyDAO(object):
             connection_parameters[parameter] = getattr(engine.url, parameter)
 
         return connection_parameters
-
-    def query(self, query_def):
-        return self.get_query(query_def=query_def)
-
-    def save(self, obj, commit=True):
-        self.session.add(obj)
-        if commit:
-            self.commit()
-
-    def commit(self):
-        self.session.commit()
