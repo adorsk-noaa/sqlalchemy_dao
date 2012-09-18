@@ -148,3 +148,6 @@ class ORM_DAO(SqlAlchemyDAO):
 
     def commit(self):
         self.session.commit()
+
+    def get_table_for_class(self, clazz):
+        return class_mapper(clazz).mapped_table
