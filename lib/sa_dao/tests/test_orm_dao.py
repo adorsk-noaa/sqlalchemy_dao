@@ -21,16 +21,16 @@ class ORM_DAO_Test(BaseTest):
         dao = ORM_DAO(session=self.session, schema=schema)
         simple_q = {
             'ID': 'simple_q',
-            'SELECT': ['{{TestClass1}}'],
+            'SELECT': ['__TestClass1'],
             'FROM': [
                 {
                     'SOURCE': 'TestClass1',
                     'JOINS': [
                         [
                             'TestClass2', [
-                                {'TYPE': 'ENTITY', 'EXPRESSION': '{{TestClass1.id}}'}, 
+                                {'TYPE': 'ENTITY', 'EXPRESSION': '__TestClass1__id'}, 
                                 '==', 
-                                {'TYPE': 'ENTITY', 'EXPRESSION': '{{TestClass2.id}}'}
+                                {'TYPE': 'ENTITY', 'EXPRESSION': '__TestClass2__id'}
                             ]
                         ]
                     ]
@@ -44,7 +44,7 @@ class ORM_DAO_Test(BaseTest):
         dao = ORM_DAO(session=self.session, schema=schema)
         q = {
             'ID': 'obj_q',
-            'SELECT': ['{{TestClass1}}'],
+            'SELECT': ['__TestClass1'],
         }
         results = dao.execute_queries(query_defs=[q])
 
@@ -54,8 +54,8 @@ class ORM_DAO_Test(BaseTest):
         q = {
             'ID': 'obj_q',
             'SELECT': [
-                {'ID': 'foo', 'EXPRESSION': '{{TestClass1}}'}, 
-                '{{TestClass1.id}}'],
+                {'ID': 'foo', 'EXPRESSION': '__TestClass1'}, 
+                '__TestClass1__id'],
         }
         results = dao.execute_queries(query_defs=[q])
 
@@ -64,7 +64,7 @@ class ORM_DAO_Test(BaseTest):
         dao = ORM_DAO(session=self.session, schema=schema)
         q = {
             'ID': 'obj_q',
-            'SELECT': ['{{TestClass1}}', '{{TestClass2}}'],
+            'SELECT': ['__TestClass1', '__TestClass2'],
             'WHERE': []
         } 
         results = dao.execute_queries(query_defs=[q])

@@ -8,6 +8,73 @@ import sys
 import re
 import copy
 import platform
+import ast
+
+
+class DefaultEntityExpressionASTVisitor(ast.NodeVisitor):
+    """ Walks Entity Expression AST to validate nodes. 
+    Used in DefaultEntityExpressionValidator below.
+    """
+
+    def __init__(self, 
+                 valid_funcs=[],
+                 name_validator=lambda name: False
+                ):
+        self.valid_funcs = valid_funcs
+        self.name_validator = name_validator
+        super(self.__class__, self).__init__()
+
+    def validate_call_node(self, node):
+        if not hasattr(node.func, 'value') or not hasattr(node.func, 'attr'):
+            raise Exception("Invalid call: '%s'" % node.__dict__)
+        func_name = "%s.%s" % (node.func.value.id, node.func.attr)
+        if not func_name in self.valid_funcs:
+            raise Exception("Invalid function: '%s.%s' is not in valid_funcs" % 
+                            ( node.func.value.id, node.func.attr)
+                           )
+
+    def visit_Name(self, node):
+        self.name_validator(node.id)
+        self.generic_visit(node)
+
+    def visit_Call(self, node):
+        self.validate_call_node(node)
+        for arg in node.args or []: self.visit(arg)
+        for kwarg in node.keywords or []: self.visit(kwarg)
+
+class InvalidExpressionError(Exception): pass
+
+class DefaultEntityExpressionValidator(object):
+    """ Validates an entity expression via python's 
+    Abstract Source Tree module.  This helps to guard against 
+    sqlinjection, eval nastiness. """
+
+    # Column tokens *MUST* have this format: __DATASOURCE__COLUMNNAME
+    # e.g. __results__cell__id
+    entity_re = '\b(__(\w+?))+\b'
+
+    # Only these function calls are allowed in expressions.
+    valid_funcs = [
+        'func.sum',
+    ]
+
+    ast_visitor_class = DefaultEntityExpressionASTVisitor
+
+    def __init__(self):
+
+        self.ast_visitor = self.ast_visitor_class(
+            name_validator=lambda name: re.match(self.entity_re, name),
+            valid_funcs=self.valid_funcs
+        )
+
+    def validate_expression(self, expression):
+        try:
+            self.ast_visitor.visit(ast.parse(expression))
+        except Exception, e:
+            raise InvalidExpressionError("Expression '%s' is not valid: %s" % (
+                expression,
+                str(e)
+            ))
 
 
 class SqlAlchemyDAO(object):
@@ -22,9 +89,12 @@ class SqlAlchemyDAO(object):
             'in': 'in_',
             }
 
+    expression_validator_class = DefaultEntityExpressionValidator
+
     def __init__(self, connection=None, schema=None):
         self.connection = connection
         self.schema = schema
+        self.expression_validator = self.expression_validator_class()
 
     def join_(self, *args, **kwargs):
         return join(*args, **kwargs)
@@ -214,9 +284,9 @@ class SqlAlchemyDAO(object):
                 parent_node['children'][source_def['ID']] = node
             # Otherwise we process the source path...
             else:
-                parts = source_def['SOURCE'].split('.')
+                parts = source_def['SOURCE'].split('__')
                 for i in range(1, len(parts) + 1):
-                    parent_id = '.'.join(parts[:i])
+                    parent_id = '__'.join(parts[:i])
                     node = source_registry['nodes'].get(parent_id)
                     if not node:
                         parent_attr = parts[i-1]
@@ -300,21 +370,30 @@ class SqlAlchemyDAO(object):
         # Map and register entity if not in the registry.
         if not entity_registry.has_key(entity_def['ID']):
 
+            # First validate the expression.  This will throw an error
+            # if the expression is invalid.
+            self.expression_validator.validate_expression(entity_def['EXPRESSION'])
+
             mapped_entities = {}
 
             # Replace entity tokens in expression w/ mapped entities.
             # This will be called for each token match.
             def replace_token_with_mapped_entity(m):
                 token = m.group(1)
-                m = re.match('(.*)\.(.*)', token)
-                if m:
-                    source_def = m.group(1)
-                    column_id = m.group(2)
-                    source = self.get_registered_source(source_registry, source_def)
-                    mapped_entities[token] = source.c[column_id]
-                    return "mapped_entities['%s']" % token
+                parts = token.split('__')
+                parts = parts[1:] # first is blank, due to initial '__'
+                attr_id = parts[-1]
+                source_def = '__'.join(parts[:-1])
+                if source_def:
+                    source = self.get_registered_source(
+                        source_registry, source_def)
+                    mapped_entities[token] = getattr(source, attr_id)
+                else:
+                    mapped_entities[token] = self.get_registered_source(
+                        source_registry, attr_id)
+                return "mapped_entities['%s']" % token
 
-            entity_code = re.sub('{{(.*?)}}', replace_token_with_mapped_entity, entity_def['EXPRESSION'])
+            entity_code = re.sub(r'\b(__(\w+))+\b', replace_token_with_mapped_entity, entity_def['EXPRESSION'])
 
             # Evaluate and label.
             mapped_entity = eval(entity_code)

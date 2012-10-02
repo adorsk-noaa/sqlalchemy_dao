@@ -16,6 +16,7 @@ class ORM_DAO(SqlAlchemyDAO):
         self.session = session
         self.connection = session.connection()
         self.schema = schema
+        self.expression_validator = self.expression_validator_class()
 
     def join_(self, *args, **kwargs):
         return orm.join(*args, **kwargs)
@@ -43,12 +44,12 @@ class ORM_DAO(SqlAlchemyDAO):
                 }
             # Otherwise we process the source path...
             else:
-                parts = source_def['SOURCE'].split('.')
+                parts = source_def['SOURCE'].split('__')
 
                 # Register dependencies and add to join tree.
                 parent_node = source_registry['join_tree']
                 if len(parts) < 2:
-                    source_id = '.'.join(parts)
+                    source_id = '__'.join(parts)
                     source = aliased(self.schema['sources'][source_id])
                     node = {
                         'source': source,
@@ -58,7 +59,7 @@ class ORM_DAO(SqlAlchemyDAO):
                     parent_node['children'][source_id] = node
                 else:
                     for i in range(1, len(parts) + 1):
-                        parent_id = '.'.join(parts[:i])
+                        parent_id = '__'.join(parts[:i])
                         if source_registry['nodes'].has_key(parent_id):
                             node = source_registry['nodes'][parent_id]
                         else:
@@ -66,7 +67,7 @@ class ORM_DAO(SqlAlchemyDAO):
                                 source = aliased(self.schema['sources'][parent_id])
                                 parent_attr = parent_id
                             else:
-                                grandparent_id = '.'.join(parts[:i-1])
+                                grandparent_id = '__'.join(parts[:i-1])
                                 parent_attr = parts[i-1]
                                 mapped_grandparent = source_registry['nodes'].get(
                                     grandparent_id)['source']
@@ -94,13 +95,18 @@ class ORM_DAO(SqlAlchemyDAO):
 
             mapped_entities = {}
 
+            # First validate the expression.  This will throw an error
+            # if the expression is invalid.
+            self.expression_validator.validate_expression(entity_def['EXPRESSION'])
+
             # Replace entity tokens in expression w/ mapped entities.
             # This will be called for each token match.
             def replace_token_with_mapped_entity(m):
                 token = m.group(1)
-                parts = token.split('.')
+                parts = token.split('__')
+                parts = parts[1:] # first is blank, due to initial '__'
                 attr_id = parts[-1]
-                source_def = '.'.join(parts[:-1])
+                source_def = '__'.join(parts[:-1])
                 if source_def:
                     source = self.get_registered_source(
                         source_registry, source_def)
@@ -110,7 +116,7 @@ class ORM_DAO(SqlAlchemyDAO):
                         source_registry, attr_id)
                 return "mapped_entities['%s']" % token
 
-            entity_code = re.sub('{{(.*?)}}', replace_token_with_mapped_entity, entity_def['EXPRESSION'])
+            entity_code = re.sub(r'\b(__(\w+))+\b', replace_token_with_mapped_entity, entity_def['EXPRESSION'])
 
             # Evaluate and label.
             mapped_entity = eval(entity_code)
