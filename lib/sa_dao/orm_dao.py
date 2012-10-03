@@ -16,7 +16,8 @@ class ORM_DAO(SqlAlchemyDAO):
         self.session = session
         self.connection = session.connection()
         self.schema = schema
-        self.expression_validator = self.expression_validator_class()
+        self.expression_validator = self.expression_validator_class(
+            valid_funcs=self.valid_funcs)
 
     def join_(self, *args, **kwargs):
         return orm.join(*args, **kwargs)

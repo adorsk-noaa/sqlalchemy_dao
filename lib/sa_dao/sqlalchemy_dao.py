@@ -62,25 +62,20 @@ class DefaultEntityExpressionValidator(object):
     # e.g. __results__cell__id
     entity_re = '\b(__(\w+?))+\b'
 
-    # Only these function calls are allowed in expressions.
-    valid_funcs = [
-        'func.sum',
-    ]
-
     ast_visitor_class = DefaultEntityExpressionASTVisitor
 
-    def __init__(self):
+    def __init__(self, valid_funcs=[]):
 
         self.ast_visitor = self.ast_visitor_class(
             name_validator=lambda name: re.match(self.entity_re, name),
-            valid_funcs=self.valid_funcs
+            valid_funcs=valid_funcs
         )
 
     def validate_expression(self, expression):
         try:
             self.ast_visitor.visit(ast.parse(expression))
         except Exception, e:
-            raise InvalidExpressionError("Expression '%s' is not valid: %s" % (
+            raise InvalidExpressionError("Expression '%s' is invalid: %s" % (
                 expression,
                 str(e)
             ))
@@ -98,12 +93,20 @@ class SqlAlchemyDAO(object):
             'in': 'in_',
             }
 
+    # Only these function calls are allowed in expressions.
+    valid_funcs = [
+        'func.sum',
+        'func.min',
+        'func.max',
+    ]
+
     expression_validator_class = DefaultEntityExpressionValidator
 
     def __init__(self, connection=None, schema=None):
         self.connection = connection
         self.schema = schema
-        self.expression_validator = self.expression_validator_class()
+        self.expression_validator = self.expression_validator_class(
+            valid_funcs=self.valid_funcs)
 
     def join_(self, *args, **kwargs):
         return join(*args, **kwargs)
@@ -396,7 +399,7 @@ class SqlAlchemyDAO(object):
                 if source_def:
                     source = self.get_registered_source(
                         source_registry, source_def)
-                    mapped_entities[token] = getattr(source, attr_id)
+                    mapped_entities[token] = source.c.get(attr_id)
                 else:
                     mapped_entities[token] = self.get_registered_source(
                         source_registry, attr_id)
