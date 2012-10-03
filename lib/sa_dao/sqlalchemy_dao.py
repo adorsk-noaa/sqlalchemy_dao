@@ -8,7 +8,7 @@ import sys
 import re
 import copy
 import platform
-import ast
+import ast, _ast
 
 
 class DefaultEntityExpressionASTVisitor(ast.NodeVisitor):
@@ -23,6 +23,15 @@ class DefaultEntityExpressionASTVisitor(ast.NodeVisitor):
         self.valid_funcs = valid_funcs
         self.name_validator = name_validator
         super(self.__class__, self).__init__()
+
+    def visit(self, node):
+        """ Visit method.  Only allowed statements are expressions.
+        All others (imports, execs, etc. are verboten). """
+        if isinstance(node, _ast.stmt) and not isinstance(node, _ast.Expr):
+            raise Exception(("Invalid statement type '%s'.  Only 'Expr'"
+                             " statements are allowed.") % type(node))
+        else:
+            super(self.__class__, self).visit(node)
 
     def validate_call_node(self, node):
         if not hasattr(node.func, 'value') or not hasattr(node.func, 'attr'):

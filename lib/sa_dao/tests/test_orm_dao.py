@@ -16,6 +16,26 @@ class ORM_DAO_Test(BaseTest):
             'schema1':  self.setUpSchemaAndData1()
         }
 
+    def test_security(self):
+        schema = self.schemas['schema1']
+        dao = ORM_DAO(session=self.session, schema=schema)
+
+        def try_import():
+            q = {
+                'ID': 'q',
+                'SELECT': ['import os'],
+            }
+            dao.execute_queries(query_defs=[q])
+        self.assertRaises(Exception, try_import)
+
+        def try_exec():
+            q = {
+                'ID': 'q',
+                'SELECT': ['exec "print \'sneaky_stuff\'"'],
+            }
+            dao.execute_queries(query_defs=[q])
+        self.assertRaises(Exception, try_exec)
+
     def test_join_query(self):
         schema = self.schemas['schema1']
         dao = ORM_DAO(session=self.session, schema=schema)
@@ -38,6 +58,7 @@ class ORM_DAO_Test(BaseTest):
             ],
         }
         results = dao.execute_queries(query_defs=[simple_q])
+        self.assertIsNotNone(results)
 
     def test_obj_query(self):
         schema = self.schemas['schema1']
@@ -47,6 +68,7 @@ class ORM_DAO_Test(BaseTest):
             'SELECT': ['__TestClass1'],
         }
         results = dao.execute_queries(query_defs=[q])
+        self.assertIsNotNone(results)
 
     def test_combined_query(self):
         schema = self.schemas['schema1']
@@ -58,6 +80,7 @@ class ORM_DAO_Test(BaseTest):
                 '__TestClass1__id'],
         }
         results = dao.execute_queries(query_defs=[q])
+        self.assertIsNotNone(results)
 
     def test_entity_where(self):
         schema = self.schemas['schema1']
@@ -68,6 +91,7 @@ class ORM_DAO_Test(BaseTest):
             'WHERE': []
         } 
         results = dao.execute_queries(query_defs=[q])
+        self.assertIsNotNone(results)
 
     def setUpSchemaAndData1(self):
         schema = {}
