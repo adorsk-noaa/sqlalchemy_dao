@@ -12,12 +12,9 @@ import types
 
 class ORM_DAO(SqlAlchemyDAO):
 
-    def __init__(self, session=None, schema=None):
+    def __init__(self, session=None, **kwargs):
+        SqlAlchemyDAO.__init__(self, connection=session.connection(), **kwargs)
         self.session = session
-        self.connection = session.connection()
-        self.schema = schema
-        self.expression_validator = self.expression_validator_class(
-            valid_funcs=self.valid_funcs)
 
     def join_(self, *args, **kwargs):
         return orm.join(*args, **kwargs)
@@ -117,10 +114,14 @@ class ORM_DAO(SqlAlchemyDAO):
                         source_registry, attr_id)
                 return "mapped_entities['%s']" % token
 
-            entity_code = re.sub(r'\b(__(\w+))+\b', replace_token_with_mapped_entity, entity_def['EXPRESSION'])
+            expression_code = re.sub(r'\b(__(\w+))+\b', 
+                                     replace_token_with_mapped_entity, 
+                                     entity_def['EXPRESSION'])
 
             # Evaluate and label.
-            mapped_entity = eval(entity_code)
+            mapped_entity = self.eval_expression_code(
+                expression_code, globals(), locals()
+            )
             if isinstance(mapped_entity, AliasedClass): 
                 mapped_entity._sa_label_name = entity_def['ID']
             else:

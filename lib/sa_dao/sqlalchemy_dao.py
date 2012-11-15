@@ -102,11 +102,12 @@ class SqlAlchemyDAO(object):
 
     expression_validator_class = DefaultEntityExpressionValidator
 
-    def __init__(self, connection=None, schema=None):
+    def __init__(self, connection=None, schema=None, expression_locals={}):
         self.connection = connection
         self.schema = schema
         self.expression_validator = self.expression_validator_class(
             valid_funcs=self.valid_funcs)
+        self.expression_locals = expression_locals
 
     def join_(self, *args, **kwargs):
         return join(*args, **kwargs)
@@ -405,10 +406,14 @@ class SqlAlchemyDAO(object):
                         source_registry, attr_id)
                 return "mapped_entities['%s']" % token
 
-            entity_code = re.sub(r'\b(__(\w+))+\b', replace_token_with_mapped_entity, entity_def['EXPRESSION'])
+            expression_code = re.sub(
+                r'\b(__(\w+))+\b', replace_token_with_mapped_entity, 
+                entity_def['EXPRESSION'])
 
             # Evaluate and label.
-            mapped_entity = eval(entity_code)
+            mapped_entity = self.eval_expression_code(
+                expression_code, globals(), locals()
+            )
             mapped_entity = mapped_entity.label(entity_def['ID'])
 
             # Register.
@@ -637,3 +642,10 @@ class SqlAlchemyDAO(object):
             connection_parameters[parameter] = getattr(engine.url, parameter)
 
         return connection_parameters
+
+    def eval_expression_code(self, expression_code, globals_, locals_):
+        merged_locals = {}
+        merged_locals.update(self.expression_locals)
+        merged_locals.update(locals_)
+        return eval(expression_code, globals_, merged_locals)
+
