@@ -109,6 +109,12 @@ class SqlAlchemyDAO(object):
             valid_funcs=self.valid_funcs)
         self.expression_locals = expression_locals
 
+    def create_all(self, **kwargs):
+        self.schema['metadata'].create_all(bind=self.connection, **kwargs)
+
+    def drop_all(self):
+        self.schema['metadata'].drop_all(bind=self.connection, **kwargs)
+
     def join_(self, *args, **kwargs):
         return join(*args, **kwargs)
 
