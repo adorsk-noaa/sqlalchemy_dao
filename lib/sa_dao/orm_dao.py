@@ -6,6 +6,7 @@ import sqlalchemy.orm as orm
 from sqlalchemy.orm import aliased, class_mapper
 from sqlalchemy.orm.util import AliasedClass
 from sqlalchemy.orm.properties import RelationshipProperty
+from sqlalchemy.orm import sessionmaker
 import re
 import types
 
@@ -15,6 +16,16 @@ class ORM_DAO(SqlAlchemyDAO):
     def __init__(self, session=None, **kwargs):
         SqlAlchemyDAO.__init__(self, connection=session.connection(), **kwargs)
         self.session = session
+
+    def get_session_w_external_transaction(self):
+        con = self.session.bind.connect()
+        trans = con.begin()
+        session = sessionmaker(bind=connection)()
+        return {
+            'connection': con,
+            'transaction': trans,
+            'session': session
+        }
 
     def join_(self, *args, **kwargs):
         return orm.join(*args, **kwargs)
