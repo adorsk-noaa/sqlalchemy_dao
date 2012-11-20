@@ -170,3 +170,22 @@ class ORM_DAO(SqlAlchemyDAO):
 
     def get_table_for_class(self, clazz):
         return class_mapper(clazz).mapped_table
+
+    def get_batched_results(self, q, batch_size):
+        """ Return an iterator that batches query results.
+        This is usually used in order to avoid overloading memory.
+        Ideally we would use window functions, but not all dbs support this.
+        """
+        total = q.count()
+        returned = 0
+        batch = None
+        # While < total_rows, if no batch, get a new batch.
+        # for item in batch, yield.
+        while returned < total:
+            if not batch:
+                batch = q.limit(batch_size).offset(returned)
+            for row in batch:
+                returned += 1
+                if returned == batch_size:
+                    batch = None
+                yield row

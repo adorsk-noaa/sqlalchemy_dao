@@ -60,6 +60,19 @@ class ORM_DAO_Test(BaseTest):
         results = dao.execute_queries(query_defs=[simple_q])
         self.assertIsNotNone(results)
 
+    def test_batched_results(self):
+        schema = self.schemas['schema1']
+        dao = ORM_DAO(session=self.session, schema=schema)
+        simple_q = {
+            'ID': 'simple_q',
+            'SELECT': ['__TestClass1'],
+        }
+        q = dao.get_query(simple_q)
+        num_results = q.count()
+        batched_results = dao.get_batched_results(q, 3)
+        results = [r for r in batched_results]
+        self.assertEquals(len(results), num_results)
+
     def test_obj_query(self):
         schema = self.schemas['schema1']
         dao = ORM_DAO(session=self.session, schema=schema)
