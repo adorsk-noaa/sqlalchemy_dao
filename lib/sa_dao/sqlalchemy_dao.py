@@ -528,32 +528,20 @@ class SqlAlchemyDAO(object):
 
     # Compile a query into raw sql.
     def query_to_raw_sql(self, q, dialect=None):
-
-        # Get dialect object.
         if not dialect:
-            # If using jython w/ zxjdbc, need to get normal dialect
-            # for bind parameter substitution.
-            drivername = self.connection.engine.url.drivername
-            m = re.match("(.*)\+zxjdbc", drivername)
-            if m:
-                dialect = self.get_dialect(m.group(1))
-            # Otherwise use the normal session dialect.
-            else:
-                dialect = self.connection.dialect
-        else:
-            dialect = self.get_dialect(dialect)
+            dialect = self.get_dialect()
+        compiler = q._compiler(dialect)
+        class LiteralCompiler(compiler.__class__):
+            def visit_bindparam(
+                self, bindparam, within_columns_clause=False, 
+                literal_binds=False, **kwargs
+            ):
+                return super(LiteralCompiler, self).render_literal_bindparam(
+                    bindparam, within_columns_clause=within_columns_clause,
+                    literal_binds=literal_binds, **kwargs
+                )
 
-        comp = compiler.SQLCompiler(dialect, q)
-        enc = dialect.encoding
-        params = {}
-        for k,v in comp.params.iteritems():
-            if isinstance(v, unicode):
-                v = v.encode(enc)
-            if isinstance(v, str):
-                v = comp.render_literal_value(v, str)
-            params[k] = v
-        raw_sql = (comp.string.encode(enc) % params).decode(enc)
-        return raw_sql
+        return LiteralCompiler(dialect, q).process(q)
 
     def get_histogram_classes(self, entity_def):
         # Return classes if they were provided.
@@ -632,12 +620,20 @@ class SqlAlchemyDAO(object):
 
         return histogram_entity
 
-    def get_dialect(self, dialect):
-        try:
-            dialects_module = __import__("sqlalchemy.dialects", fromlist=[dialect])
-            return getattr(dialects_module, dialect).dialect()
-        except:
-            return None
+    def get_dialect(self, dialect_name=None):
+        if not dialect_name:
+            # If using jython w/ zxjdbc, need to get normal dialect
+            # for bind parameter substitution.
+            drivername = self.connection.engine.url.drivername
+            m = re.match("(.*)\+zxjdbc", drivername)
+            if m:
+                dialect_name = self.get_dialect(m.group(1))
+            # Otherwise use the normal session dialect.
+            else:
+                return self.connection.dialect
+
+        dialects_module = __import__("sqlalchemy.dialects", fromlist=[dialect_name])
+        return getattr(dialects_module, dialect).dialect()
 
     def get_connection_parameters(self):
         engine = self.connection.engine
