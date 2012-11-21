@@ -146,7 +146,7 @@ class SqlAlchemyDAO(object):
         return self.connection.execute(q)
 
     # Return a query object for the given query definition. 
-    def get_query(self, query_def, **kwargs):
+    def get_query(self, query_def, return_registries=False, **kwargs):
 
         # Initialize registries.
         source_registry = {'join_tree': {'children': {}}, 'nodes': {}}
@@ -238,7 +238,13 @@ class SqlAlchemyDAO(object):
             order_bys=order_bys
         )
 
-        return q
+        if not return_registries:
+            return q
+        else:
+            return q, {
+                'entities': entity_registry, 
+                'sources': source_registry,
+            }
 
     def assemble_query(self, selections=[], froms=[], wheres=[], group_bys=[],
                        order_bys=[]):
