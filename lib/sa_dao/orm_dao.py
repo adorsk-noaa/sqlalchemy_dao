@@ -123,6 +123,7 @@ class ORM_DAO(SqlAlchemyDAO):
                 else:
                     mapped_entities[token] = self.get_registered_source(
                         source_registry, attr_id)
+                mapped_entities[token] = self.alter_col(mapped_entities[token])
                 return "mapped_entities['%s']" % token
 
             expression_code = re.sub(r'\b(__(\w+))+\b', 

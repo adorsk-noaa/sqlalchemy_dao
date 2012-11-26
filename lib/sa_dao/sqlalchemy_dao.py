@@ -412,7 +412,8 @@ class SqlAlchemyDAO(object):
                 if source_def:
                     source = self.get_registered_source(
                         source_registry, source_def)
-                    mapped_entities[token] = source.c.get(attr_id)
+                    mapped_entities[token] = self.alter_col(
+                        source.c.get(attr_id))
                 else:
                     mapped_entities[token] = self.get_registered_source(
                         source_registry, attr_id)
@@ -433,6 +434,9 @@ class SqlAlchemyDAO(object):
 
         return entity_registry[entity_def['ID']]
 
+    def alter_col(self, col):
+        """ Alter a column element. Intended to be subclassed. """
+        return col
     
     def get_keyed_results(self, key_def=None, query_defs=None):
 
