@@ -187,6 +187,6 @@ class ORM_DAO(SqlAlchemyDAO):
                 batch = q.limit(batch_size).offset(returned)
             for row in batch:
                 returned += 1
-                if returned == batch_size:
+                if (returned % batch_size) == 0:
                     batch = None
                 yield row
