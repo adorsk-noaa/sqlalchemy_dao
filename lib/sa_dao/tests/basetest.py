@@ -7,7 +7,7 @@ class BaseTest(unittest.TestCase):
 
     def setUp(self):
         self.engine = create_engine(
-            'sqlite:///:memory:',
+            'sqlite://',
             convert_unicode=True,
         )
         self.Session = sessionmaker()

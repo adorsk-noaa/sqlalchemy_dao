@@ -123,6 +123,8 @@ class SqlAlchemyDAO(object):
         results = {}
         for query_def in query_defs:
             q = self.get_query(query_def)
+
+            print "q is: ", self.query_to_raw_sql(q)
             # If using jython, compile first.  Sometimes
             # there are issues w/ using histograms.
             if platform.system() == 'Java':
@@ -157,13 +159,10 @@ class SqlAlchemyDAO(object):
             query_def = {'SELECT': query_def}
 
         # Process 'from'.
-        froms = []
         for source_def in query_def.get('FROM', []):
             if not source_def: continue
-            # Process any joins the source has and add to from obj.
-            source = self.add_joins(source_registry, entity_registry, 
-                                    source_def)
-            froms.append(source)
+            # Process any joins the source has and add to source registry.
+            self.add_source(source_registry, entity_registry, source_def)
 
         # Process 'select'.
         selections = []
@@ -226,8 +225,7 @@ class SqlAlchemyDAO(object):
             order_bys.append(order_by_entity)
 
         # Process joins.
-        joins = self.process_joins(source_registry)
-        froms.extend(joins)
+        froms = self.process_sources(source_registry)
 
         # Assemble query.
         q = self.assemble_query(
@@ -264,16 +262,16 @@ class SqlAlchemyDAO(object):
         )
         return q
 
-    def process_joins(self, source_registry):
-        joins = []
+    def process_sources(self, source_registry):
+        froms = []
         for node in source_registry['join_tree']['children'].values():
             join_chain = self.process_join_tree_node(node)
             if join_chain:
                 join_point = join_chain[0]
                 for target in join_chain[1:]:
                     join_point = self.join_(join_point, target)
-                joins.append(join_point)
-        return joins
+                froms.append(join_point)
+        return froms 
 
     def process_join_tree_node(self, node):
         join_chain = [node['source']]
@@ -291,6 +289,8 @@ class SqlAlchemyDAO(object):
 
     # Get or register a source in a source registry.
     def get_registered_source(self, source_registry, source_def):
+        #@TODO: perhaps consolidate join logic here w/
+        # 'process_source'? we just add 'JOIN' defs here?
         source_def = self.prepare_source_def(source_def)
 
         node = source_registry['nodes'].get(source_def['ID'])
@@ -327,10 +327,12 @@ class SqlAlchemyDAO(object):
 
         return node['source']
 
-    def add_joins(self, source_registry, entity_registry, source_def):
+    def add_source(self, source_registry, entity_registry, source_def):
         """ Add joins to a given source. """
         source_def = self.prepare_source_def(source_def)
         source = self.get_registered_source(source_registry, source_def)
+        source_node = source_registry['nodes'][source_def['ID']]
+
         for join_def in source_def.get('JOINS', []):
             if not isinstance(join_def, list):
                 join_def = [join_def]
@@ -343,15 +345,13 @@ class SqlAlchemyDAO(object):
             else:
                 onclause = None
 
-            source = self.join_(
-                source, 
-                self.add_joins(
-                    source_registry,
-                    entity_registry,
-                    join_def[0]
-                ), 
-                onclause=onclause
-            )
+            target_def = self.prepare_source_def(join_def[0])
+            # Register target if not yet registered.
+            self.get_registered_source(source_registry, target_def)
+            target_node = source_registry['nodes'].get(target_def['ID'])
+
+            # Add to child nodes of join target.
+            target_node['children'][source_def['ID']] = source_node
 
         return source
 
@@ -471,15 +471,9 @@ class SqlAlchemyDAO(object):
             else:
                 # Select keys and labels.
                 # We merge the key query attributes with our overrides.
+                key_query_def = key_def.get('QUERY')
                 keys_labels = self.execute_queries(
-                    query_defs = [
-                        dict(key_def.items() + {
-                            'ID': 'keylabel_q', 
-                            'AS_DICTS': True, 
-                            'GROUP_BY': [key_entity, label_entity],
-                            'SELECT_GROUP_BY': True
-                            }.items() )
-                        ]).values()[0]
+                    query_defs=[key_def.get('QUERY')]).values()[0]
 
             # Pre-seed keyed results with keys and labels.
             for key_label in keys_labels:
@@ -498,6 +492,7 @@ class SqlAlchemyDAO(object):
 
         # Execute primary queries.
         results = self.execute_queries(query_defs)
+        print "r is: ", results
 
         # For each result set...
         for result_set_id, result_set in results.items():
