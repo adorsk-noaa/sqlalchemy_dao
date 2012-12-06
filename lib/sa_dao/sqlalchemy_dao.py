@@ -124,7 +124,6 @@ class SqlAlchemyDAO(object):
         for query_def in query_defs:
             q = self.get_query(query_def)
 
-            print "q is: ", self.query_to_raw_sql(q)
             # If using jython, compile first.  Sometimes
             # there are issues w/ using histograms.
             if platform.system() == 'Java':
@@ -188,19 +187,9 @@ class SqlAlchemyDAO(object):
         group_bys = []
         for entity_def in query_def.get('GROUP_BY', []):
             if not entity_def: continue
-
-            entity_def = self.prepare_entity_def(entity_def)
-
-            # If entity is a histogram entity, get histogram entities for grouping.
-            if entity_def.get('AS_HISTOGRAM'):
-                histogram_entity = self.get_histogram_entity(
-                    source_registry, entity_registry, entity_def)
-                group_bys.extend([histogram_entity])
-
-            # Otherwise just use the plain entity for grouping.
-            else:
-                entity = self.get_registered_entity(source_registry, entity_registry, entity_def)
-                group_bys.append(entity)
+            entity = self.get_registered_entity(source_registry, 
+                                                entity_registry, entity_def)
+            group_bys.append(entity)
 
         # If 'select_group_by' is true, add group_by entities to select.
         if query_def.get('SELECT_GROUP_BY'):
@@ -394,39 +383,47 @@ class SqlAlchemyDAO(object):
 
         # Map and register entity if not in the registry.
         if not entity_registry.has_key(entity_def['ID']):
+        
+            # Handle histogram entities.
+            if entity_def.get('AS_HISTOGRAM'):
+                mapped_entity = self.get_histogram_entity(source_registry, entity_registry,
+                                             entity_def)
+            # All other entities...
+            else:
+                # First validate the expression.  This will throw an error
+                # if the expression is invalid.
+                self.expression_validator.validate_expression(entity_def['EXPRESSION'])
 
-            # First validate the expression.  This will throw an error
-            # if the expression is invalid.
-            self.expression_validator.validate_expression(entity_def['EXPRESSION'])
+                mapped_entities = {}
 
-            mapped_entities = {}
+                # Replace entity tokens in expression w/ mapped entities.
+                # This will be called for each token match.
+                def replace_token_with_mapped_entity(m):
+                    token = m.group(1)
+                    parts = token.split('__')
+                    parts = parts[1:] # first is blank, due to initial '__'
+                    attr_id = parts[-1]
+                    source_def = '__'.join(parts[:-1])
+                    if source_def:
+                        source = self.get_registered_source(
+                            source_registry, source_def)
+                        mapped_entities[token] = self.alter_col(
+                            source.c.get(attr_id))
+                    else:
+                        mapped_entities[token] = self.get_registered_source(
+                            source_registry, attr_id)
+                    return "mapped_entities['%s']" % token
 
-            # Replace entity tokens in expression w/ mapped entities.
-            # This will be called for each token match.
-            def replace_token_with_mapped_entity(m):
-                token = m.group(1)
-                parts = token.split('__')
-                parts = parts[1:] # first is blank, due to initial '__'
-                attr_id = parts[-1]
-                source_def = '__'.join(parts[:-1])
-                if source_def:
-                    source = self.get_registered_source(
-                        source_registry, source_def)
-                    mapped_entities[token] = self.alter_col(
-                        source.c.get(attr_id))
-                else:
-                    mapped_entities[token] = self.get_registered_source(
-                        source_registry, attr_id)
-                return "mapped_entities['%s']" % token
+                expression_code = re.sub(
+                    r'\b(__(\w+))+\b', replace_token_with_mapped_entity, 
+                    entity_def['EXPRESSION'])
 
-            expression_code = re.sub(
-                r'\b(__(\w+))+\b', replace_token_with_mapped_entity, 
-                entity_def['EXPRESSION'])
+                # Evaluate.
+                mapped_entity = self.eval_expression_code(
+                    expression_code, globals(), locals()
+                )
 
-            # Evaluate and label.
-            mapped_entity = self.eval_expression_code(
-                expression_code, globals(), locals()
-            )
+            # Label the entity.
             mapped_entity = mapped_entity.label(entity_def['ID'])
 
             # Register.
@@ -492,7 +489,6 @@ class SqlAlchemyDAO(object):
 
         # Execute primary queries.
         results = self.execute_queries(query_defs)
-        print "r is: ", results
 
         # For each result set...
         for result_set_id, result_set in results.items():
@@ -599,8 +595,13 @@ class SqlAlchemyDAO(object):
     def get_histogram_entity(self, source_registry, entity_registry, entity_def):
         entity_def = self.prepare_entity_def(entity_def)
 
-        # Get or register entity.
-        entity = self.get_registered_entity(source_registry, entity_registry, entity_def)
+        # Get or register base entity.
+        # We copy entity_def and take out 'as_histogram' to avoid recursion.
+        base_entity_def = {}
+        base_entity_def.update(entity_def)
+        base_entity_def['AS_HISTOGRAM'] = False
+        base_entity = self.get_registered_entity(source_registry,
+                                                 entity_registry, base_entity_def)
 
         # Get histogram classes.
         classes = self.get_histogram_classes(entity_def)
@@ -609,14 +610,13 @@ class SqlAlchemyDAO(object):
         cases = []
         for c in classes:
             case_obj = (
-                    and_(entity >= c[0], entity < c[1]), 
+                    and_(base_entity >= c[0], base_entity < c[1]), 
                     self.get_histogram_class_label(c)
                     )
             cases.append(case_obj)
 
-        # Get labeled entity.
-        histogram_entity = case(cases).label(entity_def['ID'])
-
+        # Return mapped entity.
+        histogram_entity = case(cases)
         return histogram_entity
 
     def get_dialect(self, dialect_name=None):
