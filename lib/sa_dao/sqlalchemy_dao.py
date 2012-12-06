@@ -1,3 +1,4 @@
+from sa_dao.util import memoized
 from sqlalchemy.sql import *
 from sqlalchemy.sql import compiler
 from sqlalchemy import cast, String, case
@@ -109,6 +110,9 @@ class SqlAlchemyDAO(object):
             valid_funcs=self.valid_funcs)
         self.expression_locals = expression_locals
 
+        # memoize get_query_results to save on queries.
+        self.get_query_results = memoized(self.get_query_results)
+
     def create_all(self, **kwargs):
         self.schema['metadata'].create_all(bind=self.connection, **kwargs)
 
@@ -124,27 +128,33 @@ class SqlAlchemyDAO(object):
         for query_def in query_defs:
             q = self.get_query(query_def)
 
-            # If using jython, compile first.  Sometimes
-            # there are issues w/ using histograms.
-            if platform.system() == 'Java':
-                q = self.query_to_raw_sql(q)
-            rows = self.get_result_cursor(q).fetchall()
+            # Compile to raw sql first, to allow for memoization.
+            # Also avoids Jython zxJDBC issues w/ histogram entities.
+            q_sql = self.query_to_raw_sql(q)
+
             # By default, return results as dictionaries.
-            if query_def.get('AS_DICTS', True):
-                q_results = []
-                for row in rows:
-                    if not isinstance(row, NamedTuple) \
-                       and not isinstance(row, RowProxy):
-                        q_results.append({'obj': row})
-                    else:
-                        q_results.append(dict(zip(row.keys(), row)))
-            else:
-                q_results = rows
+            q_results = self.get_query_results(
+                q_sql, query_def.get('AS_DICTS', True))
+
             results[query_def['ID']] = q_results
         return results
 
     def get_result_cursor(self, q):
         return self.connection.execute(q)
+
+    def get_query_results(self, q, as_dicts):
+        rows = self.get_result_cursor(q).fetchall()
+        if as_dicts:
+            results = []
+            for row in rows:
+                if not isinstance(row, NamedTuple) \
+                   and not isinstance(row, RowProxy):
+                    results.append({'obj': row})
+                else:
+                    results.append(dict(zip(row.keys(), row)))
+        else:
+            results = [r for r in rows]
+        return results
 
     # Return a query object for the given query definition. 
     def get_query(self, query_def, return_registries=False, **kwargs):
