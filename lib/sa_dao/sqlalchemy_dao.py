@@ -402,7 +402,7 @@ class SqlAlchemyDAO(object):
 
 
     # Get or register an entity.
-    def get_registered_entity(self, source_registry={}, entity_registry={},
+    def get_registered_entity(self, source_registry={}, entity_registry={}, 
                               token_registry={}, entity_def=None, **kwargs):
 
         entity_def = self.prepare_entity_def(entity_def)
@@ -413,7 +413,7 @@ class SqlAlchemyDAO(object):
             if entity_def.get('AS_HISTOGRAM'):
                 mapped_entity = self.get_histogram_entity(
                     source_registry=source_registry, 
-                    entity_registry=entity_registr,
+                    entity_registry=entity_registry,
                     entity_def=entity_def,
                     token_registry=token_registry,
                     **kwargs
@@ -510,7 +510,7 @@ class SqlAlchemyDAO(object):
                 for c in classes:
                     keys_labels.append({
                         key_entity['ID']: self.get_histogram_class_label(c)
-                        })
+                    })
 
             # Otherwise select the keys and labels per the key_def...
             else:
