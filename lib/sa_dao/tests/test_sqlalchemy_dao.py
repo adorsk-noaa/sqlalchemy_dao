@@ -16,6 +16,24 @@ class SqlAlchemyDAOTestCase(BaseTest):
             'schema1':  self.setUpSchemaAndData1()
         }
 
+    def xtest_token_query(self):
+        schema = self.schemas['schema1']
+        dao = SqlAlchemyDAO(connection=self.connection, schema=schema)
+        # Generate data.
+        self.connection.execute(
+            schema['sources']['substrate'].insert(), 
+            [{'id': 'S1', 'label': 's1'}]
+        )
+        tkn1 = {'ID': 'tkn1', 'EXPRESSION': '__substrate__id'}
+        token_registry = {'tkn1': tkn1}
+        query_def = {
+            'ID': 'test',
+            'SELECT': [
+                {'ID': 'tkn_id', 'EXPRESSION': '___TOKENS__tkn1'}
+            ]
+        }
+        dao.execute_queries([query_def], token_registry=token_registry)
+
     def test_keyed_query(self):
         schema = self.schemas['schema1']
         dao = SqlAlchemyDAO(connection=self.connection, schema=schema)
@@ -30,7 +48,7 @@ class SqlAlchemyDAOTestCase(BaseTest):
                 ]
             }, 
             'KEY_ENTITY': {
-                'ID': 'substrate_id'
+                'ID': 'substrate_id', 'EXPRESSION': '__result__id'
             }
         }
 
@@ -49,7 +67,8 @@ class SqlAlchemyDAOTestCase(BaseTest):
                         'ID': 'inner', 
                         'SELECT': [
                             {'EXPRESSION': '__result__cell_id', 'ID': 'cell_id'}, 
-                            {'EXPRESSION': '__result__substrate_id', 'ID': 'substrate_id'}
+                            #{'EXPRESSION': '__result__substrate_id', 'ID': 'substrate_id'}
+                            {'EXPRESSION': '___TOKENS__KEY', 'ID': 'substrate_id'}
                         ], 
                         'SELECT_GROUP_BY': True
                     }, 
@@ -143,8 +162,6 @@ class SqlAlchemyDAOTestCase(BaseTest):
             'metadata': metadata,
         }
 
-
-        # Generate data.
         """
         test1_rows = []
         for i in range(5):

@@ -123,10 +123,10 @@ class SqlAlchemyDAO(object):
         return join(*args, **kwargs)
 
     # Given a list of query definitions, return results.
-    def execute_queries(self, query_defs=[]):
+    def execute_queries(self, query_defs=[], **kwargs):
         results = {}
         for query_def in query_defs:
-            q = self.get_query(query_def)
+            q = self.get_query(query_def, **kwargs)
 
             # Compile to raw sql first, to allow for memoization.
             # Also avoids Jython zxJDBC issues w/ histogram entities.
@@ -156,12 +156,16 @@ class SqlAlchemyDAO(object):
             results = [r for r in rows]
         return results
 
+    def generate_source_registry(self):
+        return {'join_tree': {'children': {}}, 'nodes': {}}
+
     # Return a query object for the given query definition. 
     def get_query(self, query_def, return_registries=False, **kwargs):
 
-        # Initialize registries.
-        source_registry = {'join_tree': {'children': {}}, 'nodes': {}}
-        entity_registry = {}
+        # Initialize registries if not provided.
+        kwargs.setdefault('source_registry', self.generate_source_registry())
+        kwargs.setdefault('entity_registry', {})
+        kwargs.setdefault('token_registry', {})
 
         # Convert simple select to query def.
         if isinstance(query_def, str):
@@ -171,7 +175,7 @@ class SqlAlchemyDAO(object):
         for source_def in query_def.get('FROM', []):
             if not source_def: continue
             # Process any joins the source has and add to source registry.
-            self.add_source(source_registry, entity_registry, source_def)
+            self.add_source(source_def=source_def, **kwargs)
 
         # Process 'select'.
         selections = []
@@ -179,8 +183,8 @@ class SqlAlchemyDAO(object):
             query_def['SELECT'] = [query_def['SELECT']]
         for entity_def in query_def.get('SELECT', []):
             if not entity_def: continue
-            entity = self.get_registered_entity(
-                source_registry, entity_registry, entity_def)
+            entity = self.get_registered_entity(entity_def=entity_def, 
+                                                **kwargs)
             selections.append(entity)
 
         # Process 'where'.
@@ -189,16 +193,15 @@ class SqlAlchemyDAO(object):
         wheres = []
         for where_def in query_def.get('WHERE', []):
             if not where_def: continue
-            where = self.process_where_def(where_def, source_registry, 
-                                           entity_registry)
+            where = self.process_where_def(where_def=where_def, **kwargs)
             wheres.append(where)
             
         # Process 'group_by'.
         group_bys = []
         for entity_def in query_def.get('GROUP_BY', []):
             if not entity_def: continue
-            entity = self.get_registered_entity(source_registry, 
-                                                entity_registry, entity_def)
+            entity = self.get_registered_entity(entity_def=entity_def, 
+                                                **kwargs)
             group_bys.append(entity)
 
         # If 'select_group_by' is true, add group_by entities to select.
@@ -214,7 +217,7 @@ class SqlAlchemyDAO(object):
                 order_by_def = {'ENTITY': order_by_def}
             # Get registered entity.
             entity = self.get_registered_entity(
-                source_registry, entity_registry, order_by_def['ENTITY'])
+                entity_def=order_by_def['ENTITY'], **kwargs)
 
             # Assign direction.
             if order_by_def.get('DIRECTION') == 'desc':
@@ -224,7 +227,7 @@ class SqlAlchemyDAO(object):
             order_bys.append(order_by_entity)
 
         # Process joins.
-        froms = self.process_sources(source_registry)
+        froms = self.process_sources(kwargs.get('source_registry'))
 
         # Assemble query.
         q = self.assemble_query(
@@ -239,12 +242,13 @@ class SqlAlchemyDAO(object):
             return q
         else:
             return q, {
-                'entities': entity_registry, 
-                'sources': source_registry,
+                'entities': kwargs.get('entity_registry'), 
+                'sources': kwargs.get('source_registry'),
+                'tokens': kwags.get('token_registry'),
             }
 
     def assemble_query(self, selections=[], froms=[], wheres=[], group_bys=[],
-                       order_bys=[]):
+                       order_bys=[], **kwargs):
 
         if len(wheres) > 0:
             whereclause = and_(*wheres)
@@ -261,20 +265,22 @@ class SqlAlchemyDAO(object):
         )
         return q
 
-    def process_sources(self, source_registry):
+    def process_sources(self, source_registry=None, **kwargs):
         froms = []
         for node in source_registry['join_tree']['children'].values():
             join_chain = self.process_join_tree_node(node)
             if join_chain:
-                join_point = join_chain[0]
+                join_point = join_chain[0]['source']
                 for target in join_chain[1:]:
-                    join_point = self.join_(join_point, target)
+                    join_point = self.join_(join_point,
+                                            target['source']['source'],
+                                            **target['kwargs'])
                 froms.append(join_point)
         return froms 
 
     def process_join_tree_node(self, node):
-        join_chain = [node['source']]
-        for child_node in node['children'].values():
+        join_chain = [node]
+        for child_node in node.get('children', {}).values():
             join_chain.extend(self.process_join_tree_node(child_node))
         return join_chain
 
@@ -287,7 +293,8 @@ class SqlAlchemyDAO(object):
         return source_def
 
     # Get or register a source in a source registry.
-    def get_registered_source(self, source_registry, source_def):
+    def get_registered_source(self, source_registry=None, source_def=None, 
+                              **kwargs):
         #@TODO: perhaps consolidate join logic here w/
         # 'process_source'? we just add 'JOIN' defs here?
         source_def = self.prepare_source_def(source_def)
@@ -299,7 +306,10 @@ class SqlAlchemyDAO(object):
 
             # If 'source' is a dict , we assume it's a query object and process it.
             if isinstance(source_def['SOURCE'], dict):
-                source = self.get_query(source_def['SOURCE']).alias(source_def['ID'])
+                source = self.get_query(
+                    source_def['SOURCE'], 
+                    token_registry=kwargs.get('token_registry')
+                ).alias(source_def['ID'])
                 node = {
                     'source': source,
                     'children': {}
@@ -326,10 +336,12 @@ class SqlAlchemyDAO(object):
 
         return node['source']
 
-    def add_source(self, source_registry, entity_registry, source_def):
+    def add_source(self, source_registry=None, entity_registry=None, 
+                   source_def=None, **kwargs):
         """ Add joins to a given source. """
         source_def = self.prepare_source_def(source_def)
-        source = self.get_registered_source(source_registry, source_def)
+        source = self.get_registered_source(source_registry, source_def,
+                                            **kwargs)
         source_node = source_registry['nodes'][source_def['ID']]
 
         for join_def in source_def.get('JOINS', []):
@@ -337,10 +349,11 @@ class SqlAlchemyDAO(object):
                 join_def = [join_def]
             if len(join_def) > 1:
                 where_def = join_def[1]
-                onclause = self.process_where_def(where_def, 
-                                                  source_registry,
-                                                  entity_registry
-                                                 )
+                onclause = self.process_where_def(
+                    where_def=where_def, 
+                    source_registry=source_registry,
+                    entity_registry=entity_registry,
+                    **kwargs)
             else:
                 onclause = None
 
@@ -350,18 +363,22 @@ class SqlAlchemyDAO(object):
             target_node = source_registry['nodes'].get(target_def['ID'])
 
             # Add to child nodes of join target.
-            target_node['children'][source_def['ID']] = source_node
+            target_node['children'][source_def['ID']] = {
+                'source': source_node,
+                'kwargs': {'onclause': onclause}
+            }
 
         return source
 
-    def process_where_def(self, where_def, source_registry,
-                           entity_registry):
-        left = self.process_where_element(source_registry, 
-                                          entity_registry, 
-                                          where_def[0])
-        right = self.process_where_element(source_registry, 
-                                          entity_registry, 
-                                          where_def[2])
+    def process_where_def(self, where_def=None, **kwargs):
+        left = self.process_where_element(
+            element=where_def[0],
+            **kwargs
+        )
+        right = self.process_where_element(
+            element=where_def[2],
+            **kwargs
+        )
         if self.ops.has_key(where_def[1]):
             op = getattr(left, self.ops[where_def[1]])
             where = op(right)
@@ -369,11 +386,9 @@ class SqlAlchemyDAO(object):
             where = left.op(where_def[1])(right)
         return where
 
-    def process_where_element(self, source_registry, entity_registry, element):
+    def process_where_element(self, element=None, **kwargs):
         if isinstance(element, dict) and element.get('TYPE') == 'ENTITY':
-            return self.get_registered_entity(source_registry, 
-                                              entity_registry,
-                                              element)
+            return self.get_registered_entity(entity_def=element, **kwargs)
         else:
             return element
 
@@ -387,17 +402,22 @@ class SqlAlchemyDAO(object):
 
 
     # Get or register an entity.
-    def get_registered_entity(self, source_registry, entity_registry, entity_def):
+    def get_registered_entity(self, source_registry={}, entity_registry={},
+                              token_registry={}, entity_def=None, **kwargs):
 
         entity_def = self.prepare_entity_def(entity_def)
 
         # Map and register entity if not in the registry.
         if not entity_registry.has_key(entity_def['ID']):
-        
             # Handle histogram entities.
             if entity_def.get('AS_HISTOGRAM'):
-                mapped_entity = self.get_histogram_entity(source_registry, entity_registry,
-                                             entity_def)
+                mapped_entity = self.get_histogram_entity(
+                    source_registry=source_registry, 
+                    entity_registry=entity_registr,
+                    entity_def=entity_def,
+                    token_registry=token_registry,
+                    **kwargs
+                )
             # All other entities...
             else:
                 # First validate the expression.  This will throw an error
@@ -415,10 +435,22 @@ class SqlAlchemyDAO(object):
                     attr_id = parts[-1]
                     source_def = '__'.join(parts[:-1])
                     if source_def:
-                        source = self.get_registered_source(
-                            source_registry, source_def)
-                        mapped_entities[token] = self.alter_col(
-                            source.c.get(attr_id))
+                        # Special tokens source.
+                        # This is intended to allow for substitution of key
+                        # entities inside queries.
+                        if source_def == '_TOKENS':
+                            token_def = token_registry.get(attr_id)
+                            token_entity = self.get_registered_entity(
+                                source_registry=source_registry,
+                                entity_registry=entity_registry,
+                                token_registry=token_registry,
+                                entity_def=token_def).element
+                            mapped_entities[token] = token_entity
+                        else:
+                            source = self.get_registered_source(
+                                source_registry, source_def)
+                            mapped_entities[token] = self.alter_col(
+                                source.c.get(attr_id))
                     else:
                         mapped_entities[token] = self.get_registered_source(
                             source_registry, attr_id)
@@ -458,6 +490,12 @@ class SqlAlchemyDAO(object):
         label_entity = key_def.setdefault('LABEL_ENTITY', copy.deepcopy(key_entity))
         label_entity = self.prepare_entity_def(label_entity)
 
+        # Initialize token registry with key entities.
+        token_registry = {
+            'KEY': key_entity,
+            'LABEL': label_entity,
+        }
+
         # Shortcuts to key and label ids.
         key_id = key_entity['ID']
         label_id = label_entity['ID']
@@ -480,7 +518,8 @@ class SqlAlchemyDAO(object):
                 # We merge the key query attributes with our overrides.
                 key_query_def = key_def.get('QUERY')
                 keys_labels = self.execute_queries(
-                    query_defs=[key_def.get('QUERY')]).values()[0]
+                    query_defs=[key_def.get('QUERY')],
+                    token_registry=token_registry).values()[0]
 
             # Pre-seed keyed results with keys and labels.
             for key_label in keys_labels:
@@ -498,7 +537,7 @@ class SqlAlchemyDAO(object):
             query_def["AS_DICTS"] = True
 
         # Execute primary queries.
-        results = self.execute_queries(query_defs)
+        results = self.execute_queries(query_defs, token_registry=token_registry)
 
         # For each result set...
         for result_set_id, result_set in results.items():
@@ -548,7 +587,7 @@ class SqlAlchemyDAO(object):
 
         return LiteralCompiler(dialect, q).process(q)
 
-    def get_histogram_classes(self, entity_def):
+    def get_histogram_classes(self, entity_def=None, **kwargs):
         # Return classes if they were provided.
         if entity_def.get('CLASSES'):
             classes = entity_def['CLASSES']
@@ -602,7 +641,8 @@ class SqlAlchemyDAO(object):
         return class_label
 
     # Get histogram entities for a given entity.
-    def get_histogram_entity(self, source_registry, entity_registry, entity_def):
+    def get_histogram_entity(self, source_registry=None, 
+                             entity_registry=None, entity_def=None, **kwargs):
         entity_def = self.prepare_entity_def(entity_def)
 
         # Get or register base entity.
@@ -610,8 +650,12 @@ class SqlAlchemyDAO(object):
         base_entity_def = {}
         base_entity_def.update(entity_def)
         base_entity_def['AS_HISTOGRAM'] = False
-        base_entity = self.get_registered_entity(source_registry,
-                                                 entity_registry, base_entity_def)
+        base_entity = self.get_registered_entity(
+            source_registry=source_registry,
+            entity_registry=entity_registry, 
+            entity_def=base_entity_def,
+            **kwargs
+        )
 
         # Get histogram classes.
         classes = self.get_histogram_classes(entity_def)
