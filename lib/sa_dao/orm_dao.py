@@ -39,7 +39,8 @@ class ORM_DAO(SqlAlchemyDAO):
                 .order_by(*order_bys)
         return q
 
-    def get_registered_source(self, source_registry, source_def):
+    def get_registered_source(self, source_registry=None, source_def=None,
+                              **kwargs):
         source_def = self.prepare_source_def(source_def)
 
         node = source_registry['nodes'].get(source_def['ID'])
@@ -95,7 +96,8 @@ class ORM_DAO(SqlAlchemyDAO):
 
         return node['source']
 
-    def get_registered_entity(self, source_registry, entity_registry, entity_def):
+    def get_registered_entity(self, source_registry=None, entity_registry=None,
+                              entity_def=None, token_registry=None, **kwargs):
 
         entity_def = self.prepare_entity_def(entity_def)
 
@@ -117,9 +119,21 @@ class ORM_DAO(SqlAlchemyDAO):
                 attr_id = parts[-1]
                 source_def = '__'.join(parts[:-1])
                 if source_def:
-                    source = self.get_registered_source(
-                        source_registry, source_def)
-                    mapped_entities[token] = getattr(source, attr_id)
+                    # Special tokens source.
+                    # This is intended to allow for substitution of key
+                    # entities inside queries.
+                    if source_def == '_TOKENS':
+                        token_def = token_registry.get(attr_id)
+                        token_entity = self.get_registered_entity(
+                            source_registry=source_registry,
+                            entity_registry=entity_registry,
+                            token_registry=token_registry,
+                            entity_def=token_def).element
+                        mapped_entities[token] = token_entity
+                    else:
+                        source = self.get_registered_source(
+                            source_registry, source_def)
+                        mapped_entities[token] = getattr(source, attr_id)
                 else:
                     mapped_entities[token] = self.get_registered_source(
                         source_registry, attr_id)
