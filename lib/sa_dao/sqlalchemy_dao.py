@@ -159,13 +159,14 @@ class SqlAlchemyDAO(object):
     # Return a query object for the given query definition. 
     def get_query(self, query_def, return_registries=False, **kwargs):
 
-        # Initialize registries.
-        source_registry = {'join_tree': {'children': {}}, 'nodes': {}}
-        entity_registry = {}
-
         # Convert simple select to query def.
         if isinstance(query_def, str):
             query_def = {'SELECT': query_def}
+
+        # Fetch registries from def, or initialize registries.
+        source_registry = query_def.get(
+            'source_registry', {'join_tree': {'children': {}}, 'nodes': {}})
+        entity_registry = query_def.get('entity_registry', {})
 
         # Process 'from'.
         for source_def in query_def.get('FROM', []):
@@ -493,8 +494,15 @@ class SqlAlchemyDAO(object):
                         "data": {}
                         }
 
-        # Modify query defs.
+        # Modify query defs to return as dicts, and to include registries
+        # that are pre-seeded w/ the key entity.
         for query_def in query_defs:
+            entity_registry = {}
+            source_registry = {}
+            for entity_def in [key_entity, label_entity]:
+                self.get_registered_entity(source_registry, entity_registry, entity_def)
+            query_def['entity_registry'] = entity_registry
+            query_def['source_registry'] = source_registry
             query_def["AS_DICTS"] = True
 
         # Execute primary queries.
