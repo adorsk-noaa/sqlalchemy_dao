@@ -207,7 +207,7 @@ class ORM_DAO(SqlAlchemyDAO):
                 yield row
 
     def query(self, query_def, format_='result_cursor', **kwargs):
-        q = self.dao.get_query(query_def, **kwargs)
+        q = self.get_query(query_def, **kwargs)
         if format_ == 'result_cursor':
             return self.get_result_cursor(q)
         elif format_ == 'query_obj':
