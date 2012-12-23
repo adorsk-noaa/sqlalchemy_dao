@@ -3,8 +3,8 @@ from sqlalchemy.sql import *
 from sqlalchemy.sql import compiler
 from sqlalchemy import cast, String, case
 from sqlalchemy.sql.expression import join
-from sqlalchemy.util._collections import NamedTuple
-from sqlalchemy.engine.base import RowProxy
+from sqlalchemy.util import KeyedTuple
+from sqlalchemy.engine import RowProxy
 import sys
 import re
 import copy
@@ -147,7 +147,7 @@ class SqlAlchemyDAO(object):
         if as_dicts:
             results = []
             for row in rows:
-                if not isinstance(row, NamedTuple) \
+                if not isinstance(row, KeyedTuple) \
                    and not isinstance(row, RowProxy):
                     results.append({'obj': row})
                 else:
