@@ -181,6 +181,11 @@ class ORM_DAO(SqlAlchemyDAO):
         if commit:
             self.commit()
 
+    def save_all(self, objs, commit=True):
+        self.session.add_all(objs)
+        if commit:
+            self.commit()
+
     def commit(self):
         self.session.commit()
 
