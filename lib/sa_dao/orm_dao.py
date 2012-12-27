@@ -219,12 +219,12 @@ class ORM_DAO(SqlAlchemyDAO):
             return q
 
 
-    def save_dicts(self, source_id, dicts, batch_insert=True, batch_size=10000,
-                   commit=True, logger=logging.getLogger()):
+    def save_dicts(self, source_id, dicts, batch_size=10000,
+                   commit=True, **kwargs):
 
         table = self.get_table_for_class(self.schema['sources'][source_id])
 
-        if not batch_insert:
+        if batch_size is None:
             self.session.execute(table.insert(), dicts)
         else:
             batch = []
@@ -235,15 +235,10 @@ class ORM_DAO(SqlAlchemyDAO):
                     self.save_dicts(
                         source_id,
                         batch, 
-                        batch_insert=False, 
+                        batch_size=None,
                         commit=False
                     )
                     batch = []
-
-                    logger.info("%d of %d items (%.1f%%)" % (
-                        batch_counter, len(dicts), 1.0 * batch_counter/len(dicts) * 100
-                    ))
-
                 batch.append(d)
                 batch_counter += 1
 
@@ -252,7 +247,7 @@ class ORM_DAO(SqlAlchemyDAO):
                 self.save_dicts(
                     source_id, 
                     batch, 
-                    batch_insert=False, 
+                    batch_size=None, 
                     commit=False,
                 )
 
