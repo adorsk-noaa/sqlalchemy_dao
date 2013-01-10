@@ -537,19 +537,8 @@ class SqlAlchemyDAO(object):
                         "data": {}
                         }
 
-        # Modify query defs to return as dicts, and to include registries
-        # that are pre-seeded w/ the key entity.
+        # Modify query defs to return as dicts.
         for query_def in query_defs:
-            entity_registry = {}
-            source_registry = self.generate_source_registry()
-            for entity_def in [key_entity, label_entity]:
-                self.get_registered_entity(
-                    source_registry=source_registry, 
-                    entity_registry=entity_registry,
-                    entity_def=entity_def
-                )
-            query_def['entity_registry'] = entity_registry
-            query_def['source_registry'] = source_registry
             query_def["AS_DICTS"] = True
 
         # Execute primary queries.
