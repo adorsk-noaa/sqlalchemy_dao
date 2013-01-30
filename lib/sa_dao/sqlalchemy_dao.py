@@ -553,7 +553,7 @@ class SqlAlchemyDAO(object):
                 result_key = result.get(key_id)
 
                 # If there was a key...
-                if result_key:
+                if result_key is not None:
                     # Get the label.
                     result_label = result.get(label_id)
                     # Get or create the keyed result.
